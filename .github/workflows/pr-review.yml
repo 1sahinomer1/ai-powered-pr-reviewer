@@ -1,0 +1,55 @@
+name: AI PR Reviewer
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Extract Jira key from PR title
+        id: jira
+        run: |
+          echo "PR_TITLE=${{ github.event.pull_request.title }}"
+          JIRA_KEY=$(echo "${{ github.event.pull_request.title }}" | grep -oE '[A-Z]+-[0-9]+' || true)
+          echo "jira_key=$JIRA_KEY" >> $GITHUB_OUTPUT
+
+      - name: Fetch Jira issue
+        if: steps.jira.outputs.jira_key != ''
+        run: |
+          echo "Fetching Jira issue: ${{ steps.jira.outputs.jira_key }}"
+          curl -s \
+            -u "${{ secrets.JIRA_EMAIL }}:${{ secrets.JIRA_API_TOKEN }}" \
+            -H "Accept: application/json" \
+            "https://${{ secrets.JIRA_DOMAIN }}/rest/api/3/issue/${{ steps.jira.outputs.jira_key }}" \
+            | jq -r '"Summary: " + .fields.summary + "\nDescription: " + (.fields.description // "No description")' > jira.txt
+          echo "✅ Jira context saved to jira.txt"
+          cat jira.txt
+
+      - name: Run AI review script
+        run: node scripts/review.js
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REVIEW_LANGUAGE: tr  # tr=Turkish, en=English, de=German
+          # Optional configuration overrides
+          # OPENAI_MODEL: gpt-4o
+          # OPENAI_TEMPERATURE: 0.3
+          # ENABLE_INLINE: true
+          # ENABLE_GENERAL: true
